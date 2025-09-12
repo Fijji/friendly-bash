@@ -1,0 +1,84 @@
+pipeline {
+  agent { label 'kaniko' }
+
+  environment {
+    ACCOUNT_ID     = '462994745952'
+    AWS_REGION     = 'us-east-1'
+    ECR_REPO_NAME  = 'lesson-8-9-ecr'
+    CHART_REPO_URL = 'git@github.com:Fijji/friendly-bash.git'
+    CHART_BRANCH   = 'main'
+    CHART_PATH     = 'lesson-8-9/charts/django-app/values.yaml'
+    AWS_CREDS_ID   = 'aws-ci-user'
+    GIT_SSH_KEY_ID = 'helm-repo-deploy-key'
+    REGISTRY       = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    ECR_REPO       = "${REGISTRY}/${ECR_REPO_NAME}"
+    IMAGE_TAG      = "${env.GIT_COMMIT.take(7)}"
+    IMAGE_FULL     = "${ECR_REPO}:${IMAGE_TAG}"
+  }
+
+  options { timestamps() }
+
+  stages {
+    stage('ECR login (docker config for Kaniko)') {
+      steps {
+        withAWS(credentials: "${AWS_CREDS_ID}", region: "${AWS_REGION}") {
+          sh '''
+            set -e
+            PASS="$(aws ecr get-login-password --region "$AWS_REGION")"
+            mkdir -p /kaniko/.docker
+            cat > /kaniko/.docker/config.json <<EOF
+            { "auths": { "https://${REGISTRY}": { "username": "AWS", "password": "${PASS}" } } }
+            EOF
+            kubectl -n ci delete secret ecr-dockerconfig --ignore-not-found
+            kubectl -n ci create secret generic ecr-dockerconfig \
+              --from-file=.dockerconfigjson=/kaniko/.docker/config.json \
+              --type=kubernetes.io/dockerconfigjson
+          '''
+        }
+      }
+    }
+
+    stage('Build & Push image (Kaniko)') {
+      steps {
+        sh '''
+          /kaniko/executor \
+            --dockerfile=Dockerfile \
+            --context=$(pwd) \
+            --destination="${IMAGE_FULL}" \
+            --cache=true
+        '''
+      }
+    }
+
+    stage('Bump Helm values in infra repo') {
+      steps {
+        sshagent (credentials: ["${GIT_SSH_KEY_ID}"]) {
+          sh '''
+            set -e
+            rm -rf infra && git clone --branch "${CHART_BRANCH}" "${CHART_REPO_URL}" infra
+            cd infra
+
+            if command -v yq >/dev/null 2>&1; then
+              yq -i '.image.repository = "'"${ECR_REPO}"'"' "${CHART_PATH}"
+              yq -i '.image.tag = "'"${IMAGE_TAG}"'"'       "${CHART_PATH}"
+            else
+              sed -i -E 's#^(\\s*repository:\\s*).*$#\\1'"${ECR_REPO}"'#' "${CHART_PATH}"
+              sed -i -E 's#^(\\s*tag:\\s*).*$#\\1"'"${IMAGE_TAG}"'"#' "${CHART_PATH}"
+            fi
+
+            git config user.name  "friendly-ci"
+            git config user.email "ci@friendly"
+            git add "${CHART_PATH}"
+            git commit -m "ci: bump django image to ${IMAGE_TAG}" || echo "No changes to commit"
+            git push origin "${CHART_BRANCH}"
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    success { echo "Pushed ${IMAGE_FULL} and updated ${CHART_PATH}" }
+    failure { echo "Build failed" }
+  }
+}
