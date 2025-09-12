@@ -3,7 +3,7 @@ terraform {
 
   backend "s3" {
     bucket         = "kpotapenko-lesson-7-tfstate-20250909"
-    key            = "lesson-db-module/terraform.tfstate"
+    key            = "Progect/terraform.tfstate"
     region         = "us-west-2"
     dynamodb_table = "terraform-locks-lesson7"
     encrypt        = true
@@ -11,6 +11,8 @@ terraform {
 
   required_providers {
     aws = { source = "hashicorp/aws", version = ">= 5.0" }
+    kubernetes = { source = "hashicorp/kubernetes", version = ">= 2.28" }
+    helm       = { source = "hashicorp/helm", version = ">= 2.11" }
   }
 }
 

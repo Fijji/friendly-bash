@@ -1,0 +1,62 @@
+controller:
+  installPlugins:
+    - kubernetes
+    - workflow-aggregator
+    - git
+    - configuration-as-code
+    - credentials-binding
+    - aws-credentials
+  JCasC:
+    configScripts:
+      admin:
+        jenkins:
+          securityRealm:
+            local:
+              users:
+                - id: admin
+                  password: admin
+          authorizationStrategy:
+            loggedInUsersCanDoAnything:
+              allowAnonymousRead: false
+
+agent:
+  enabled: true
+  podTemplates:
+    kaniko:
+      name: kaniko
+      label: kaniko
+      containers:
+        - name: jnlp
+          image: jenkins/inbound-agent:alpine-jdk21
+          args: "^${computer.jnlpmac} ^${computer.name}"
+        - name: kaniko
+          image: gcr.io/kaniko-project/executor:latest
+          command: ["/busybox/cat"]
+          ttyEnabled: true
+          volumeMounts:
+            - name: kaniko-cache
+              mountPath: /kaniko/.cache
+            - name: docker-config
+              mountPath: /kaniko/.docker
+      volumes:
+        - emptyDir: {}
+          name: kaniko-cache
+        - secret:
+            secretName: ecr-dockerconfig
+          name: docker-config
+
+rbac:
+  create: true
+serviceAccount:
+  create: true
+  name: jenkins
+
+extraObjects:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: ecr-dockerconfig
+    type: kubernetes.io/dockerconfigjson
+    data:
+      .dockerconfigjson: ""
+

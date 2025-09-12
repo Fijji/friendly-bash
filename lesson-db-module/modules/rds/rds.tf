@@ -1,6 +1,4 @@
-locals {
-  create_standard = var.use_aurora == false
-}
+locals { create_standard = var.use_aurora == false }
 
 resource "aws_db_instance" "this" {
   count                     = local.create_standard ? 1 : 0
@@ -23,4 +21,5 @@ resource "aws_db_instance" "this" {
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-instance" })
 }
+
 
